@@ -2,7 +2,7 @@
 This repository contains a tool for viewing and comparing render profile results.
 
 This repository is part of the larger MoonRay/Arras codebase.  It is included as a submodule in the top-level
-OpenMoonRay repository located here: [OpenMoonRay](https://github.com/dreamworksanimation/openmoonray)
+OpenMoonRay repository located here: [OpenMoonRay](https://github.com/OpenMoonRay/openmoonray)
 
 ## Requirements
 This tool requires several Python modules in order to run. These requirements along with their versions
