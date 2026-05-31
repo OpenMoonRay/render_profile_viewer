@@ -16,7 +16,7 @@ authors = [
 # These are appended after "python setup.py build [install]"
 # Add --no-build-sphinx to disable the automatic building of docs.
 rez_build_args = {
-    'python-3.9': ['--no-build-sphinx'],
+    'python-3.11': ['--no-build-sphinx'],
     'python-3.10': ['--no-build-sphinx'],
 }
 
@@ -54,4 +54,3 @@ def commands():
 
 with scope("config") as config:
     config.package_filter = []
-
