@@ -76,6 +76,28 @@ def get_gigabytes_from_size(size_string, size_unit):
         return float(size_string) / 1024 / 1024
 
 
+_DATE_PREFIX_RE = re.compile(r'^\d{4}-\d{2}-\d{2}_')
+_RUN_BASED_ABBREVS = {'sca', 'vec', 'xpu'}
+
+
+def _is_profile_structure(path):
+    """Return True if path is a directory whose immediate subdirectories
+    contain date-prefixed (.txt/.log) log files, matching the layout used
+    by the default profile_directory (test_name/YYYY-MM-DD_*.txt)."""
+    if not os.path.isdir(path):
+        return False
+    with os.scandir(path) as entries:
+        for entry in entries:
+            if entry.is_dir():
+                with os.scandir(entry.path) as subentries:
+                    for subentry in subentries:
+                        if not subentry.is_dir():
+                            ext = os.path.splitext(subentry.name)[1]
+                            if ext in ('.txt', '.log') and _DATE_PREFIX_RE.match(subentry.name):
+                                return True
+    return False
+
+
 # noinspection PyUnresolvedReferences
 class RenderProfileChartView(QtChart.QChartView):
 
@@ -1031,9 +1053,13 @@ class MyWindow(QtWidgets.QMainWindow):
 
         self.images_cache = dict()
         self.log_file_mode = False
+        self._cmdline_profile_dir = None
         if logs:
-            self.log_files = logs
-            self.log_file_mode = True
+            if len(logs) == 1 and _is_profile_structure(logs[0]):
+                self._cmdline_profile_dir = os.path.abspath(logs[0])
+            else:
+                self.log_files = logs
+                self.log_file_mode = True
 
         # Debounce timer for test selection changes
         self._test_selection_timer = QtCore.QTimer()
@@ -1053,6 +1079,9 @@ class MyWindow(QtWidgets.QMainWindow):
         self.profile_directory = os.environ.get(
             "RPV_PROFILE_DIR",
             "/work/rd/raas/moonray/ProfileRuns/latest_results/profile_reports")
+        if self._cmdline_profile_dir:
+            self.profile_directory = self._cmdline_profile_dir
+        self._run_based_mode = self._detect_run_based_mode()
         self.process_weeks = True
         self.current_test_name = None
 
@@ -1187,12 +1216,12 @@ class MyWindow(QtWidgets.QMainWindow):
             self.tests_list.itemSelectionChanged.connect(self.selection_changed_tests)
             self.populate_test_list()
 
-            # Weeks List
+            # Weeks/Dates List
             weeks_list_widget = QtWidgets.QWidget()
             tests_weeks_v_splitter.addWidget(weeks_list_widget)
             weeks_list_widget.setLayout(QtWidgets.QVBoxLayout())
-            weeks_list_label = QtWidgets.QLabel("Weeks")
-            weeks_list_widget.layout().addWidget(weeks_list_label)
+            self.weeks_list_label = QtWidgets.QLabel("Dates/Runs" if self._run_based_mode else "Weeks")
+            weeks_list_widget.layout().addWidget(self.weeks_list_label)
             self.weeks_list = QtWidgets.QListWidget()
             weeks_list_widget.layout().addWidget(self.weeks_list)
             self.weeks_list.setSelectionMode(QtWidgets.QAbstractItemView.ExtendedSelection)
@@ -1837,6 +1866,9 @@ class MyWindow(QtWidgets.QMainWindow):
         file_dialog.setOptions(QtWidgets.QFileDialog.DontUseNativeDialog)  # Forces Qt dialog with input field
         if file_dialog.exec():
             self.profile_directory = file_dialog.selectedFiles()[0]  # Get the chosen directory
+            self._run_based_mode = self._detect_run_based_mode()
+            if hasattr(self, 'weeks_list_label'):
+                self.weeks_list_label.setText("Dates/Runs" if self._run_based_mode else "Weeks")
             self.setWindowTitle(f"Render Profile Viewer {__version__} -- (Profile directory: {self.profile_directory})")
             self.populate_test_list()
             self.tests_list.setCurrentRow(0)
@@ -2079,6 +2111,27 @@ class MyWindow(QtWidgets.QMainWindow):
     def get_test_dir(self, test_name):
         return os.path.join(self.profile_directory, test_name)
 
+    def _detect_run_based_mode(self):
+        """Return True if profile_directory uses date_N_abbrev_scene.txt naming
+        (abbreviated exec mode + scene suffix) rather than the default
+        date_N_exec_mode.txt naming with full mode names."""
+        try:
+            with os.scandir(self.profile_directory) as entries:
+                for entry in entries:
+                    if entry.is_dir():
+                        with os.scandir(entry.path) as subentries:
+                            for subentry in subentries:
+                                if not subentry.is_dir():
+                                    stem, ext = os.path.splitext(subentry.name)
+                                    if ext in ('.txt', '.log'):
+                                        parts = stem.split('_')
+                                        if len(parts) >= 3 and parts[1].isdigit() and parts[2] in _RUN_BASED_ABBREVS:
+                                            return True
+                                        return False
+        except OSError:
+            pass
+        return False
+
     def extract_weeks_from_cache_directory(self, cache_dir, test_name, weeks):
         """Extract weeks from cache files in the specified directory.
         
@@ -2129,11 +2182,20 @@ class MyWindow(QtWidgets.QMainWindow):
         with os.scandir(test_dir) as files:
             for f in files:
                 if not f.is_dir():
-                    week = f.name.split('_')[0]
-                    weeks.add(week)
+                    if self._run_based_mode:
+                        ext = os.path.splitext(f.name)[1]
+                        if ext not in ('.txt', '.log'):
+                            continue
+                        parts = f.name.split('_')
+                        if len(parts) >= 2 and parts[1].isdigit():
+                            weeks.add('_'.join(parts[:2]))
+                    else:
+                        week = f.name.split('_')[0]
+                        weeks.add(week)
 
         # If use_cache is enabled, also check cache directories for cache files
-        if self.use_cache:
+        # (skip in run-based mode: cache keys use date-only format which would pollute the list)
+        if self.use_cache and not self._run_based_mode:
             # Check global cache directory first
             self.extract_weeks_from_cache_directory(self.global_cache_directory, test_name, weeks)
             
@@ -2177,14 +2239,26 @@ class MyWindow(QtWidgets.QMainWindow):
 
     def get_log_path(self, test_name, week, exec_mode):
         test_dir = self.get_test_dir(test_name)
+        abbrev = exec_mode[:3]  # e.g. sca/vec/xpu
+        if self._run_based_mode:
+            # Files: {date}_{run}_{abbrev}_{scene}.txt — week already encodes date_run
+            with os.scandir(test_dir) as files:
+                for f in files:
+                    if not f.is_dir():
+                        if fnmatch.fnmatch(f.name, f"{week}_{abbrev}*.txt"):
+                            return os.path.join(test_dir, f.name)
+            return None
+        # Default mode: {date}_*_{exec_mode}.txt
+        abbrev_fallback = None
         with os.scandir(test_dir) as files:
             for f in files:
                 if not f.is_dir():
                     if fnmatch.fnmatch(f.name, f"{week}_*_{exec_mode}.txt"):
-                        log_path = os.path.join(test_dir, f.name)
-                        return log_path
-
-        return None
+                        return os.path.join(test_dir, f.name)
+                    if abbrev != exec_mode and abbrev_fallback is None:
+                        if fnmatch.fnmatch(f.name, f"{week}_*_{abbrev}*.txt"):
+                            abbrev_fallback = os.path.join(test_dir, f.name)
+        return abbrev_fallback
 
     def search_log_next(self):
         self.search_forward = True
@@ -2242,7 +2316,7 @@ class MyWindow(QtWidgets.QMainWindow):
             if week not in self.stats:
                 self.stats[week] = dict()
             log_path = self.get_log_path(test_name, week, test_type)
-            if not log_path:
+            if not log_path and not self._run_based_mode:
                 next_day = str(datetime.datetime.strptime(week, "%Y-%m-%d").date() +
                                datetime.timedelta(days=1))
                 log_path = self.get_log_path(test_name, next_day, test_type)
@@ -2250,15 +2324,15 @@ class MyWindow(QtWidgets.QMainWindow):
                     prev_day = str(datetime.datetime.strptime(week, "%Y-%m-%d").date() -
                                    datetime.timedelta(days=1))
                     log_path = self.get_log_path(test_name, prev_day, test_type)
-                    if not log_path:
-                        # If cache is enabled, try to load from cache even without log file
-                        if self.use_cache:
-                            cache_file_name = f"{test_name}_{week}_{test_type}.json"
-                            stats = self.load_stats_from_cache(cache_file_name)
-                            if stats:
-                                self.stats[week][test_type] = stats
-                                continue
-                        self.stats[week][test_type] = "missing"
+            if not log_path:
+                # If cache is enabled, try to load from cache even without log file
+                if self.use_cache:
+                    cache_file_name = f"{test_name}_{week}_{test_type}.json"
+                    stats = self.load_stats_from_cache(cache_file_name)
+                    if stats:
+                        self.stats[week][test_type] = stats
+                        continue
+                self.stats[week][test_type] = "missing"
             if log_path:
                 if test_type not in self.stats[week]:
                     self.stats[week][test_type] = self.get_stats(test_name, week, log_path, test_type)
@@ -3120,9 +3194,16 @@ def main():
     parser = argparse.ArgumentParser(description="Visualizes render profile"
                                                  " statistics from log files"
                                                  " using charts")
-    parser.add_argument('logs', nargs='*', help='optional list of log files to '
-                                                'display as an alternative to the '
-                                                'default render logs')
+    parser.add_argument('logs', nargs='*',
+                        help='optional list of log files or directories to display. '
+                             'If a single directory is given and it contains '
+                             'subdirectories with date-prefixed log files '
+                             '(YYYY-MM-DD_N_<mode>_<scene>.txt), it is treated as a '
+                             'profile directory: subdirectory names become the Tests '
+                             'list and date/run combinations (e.g. 2026-06-16_1) '
+                             'become the Dates/Runs list, mirroring the default '
+                             'weekly-profile layout. Otherwise, all .log/.txt files '
+                             'found recursively are shown in a flat log list.')
     args = parser.parse_args()
 
     app = QtWidgets.QApplication(sys.argv)
