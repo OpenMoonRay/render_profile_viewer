@@ -1,4 +1,4 @@
-# Copyright 2023-2024 DreamWorks Animation LLC
+# Copyright 2023-2026 DreamWorks Animation LLC
 # SPDX-License-Identifier: Apache-2.0
 
 # This setup.py is run under two conditions:
@@ -10,27 +10,31 @@
 # is removed before it is passed to setup().  Build numbers for pre-releases
 # should be set in setup.cfg, so those get preserved.
 
+import configparser
 import os
 
-import pkg_resources
-import setuptools.config
+import setuptools
 
 CONFIG_FILE = "setup.cfg"
-NUMPSEP = "."
 
-config = setuptools.config.read_configuration(CONFIG_FILE)
+config = configparser.ConfigParser()
+config.read(CONFIG_FILE)
 name = config["metadata"]["name"]
-pyversion = pkg_resources.safe_version(config["metadata"]["version"])
+pyversion = config["metadata"]["version"]
 rezversion = os.getenv("REZ_BUILD_PROJECT_VERSION")
 
-# Make sure version from rez-build, e.g. 1.2.3.alpha.4 gets PEP440ified.
 # Runtime version from rez-build takes precedence over setup.cfg.
 if rezversion:
-    pyversion = pkg_resources.safe_version(rezversion)
+    pyversion = rezversion
 
 # Conform standard releases to the 3 tokens preferred by the pydevs.
 # Pre-releases will always be 3 tokens, e.g. 1.2.3a0
-version = NUMPSEP.join(str(_) for _ in pyversion.split(NUMPSEP)[0:3])
+parts = pyversion.split(".")
+version = ".".join(parts[:3])
+if len(parts) >= 4 and parts[3] in {"alpha", "beta", "rc"}:
+    suffix = {"alpha": "a", "beta": "b", "rc": "rc"}[parts[3]]
+    serial = parts[4] if len(parts) >= 5 else "0"
+    version += suffix + serial
 
 # I stole this idea from setuptools_scm.
 versionfile = os.path.join(name, "_version.py")
@@ -47,4 +51,3 @@ with open(versionfile, "w") as fh:
 
 setuptools.setup(version=version,
                  data_files=[(name, [versionfile])])
-

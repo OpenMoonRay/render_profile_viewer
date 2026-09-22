@@ -1,4 +1,4 @@
-# Copyright 2023-2024 DreamWorks Animation LLC
+# Copyright 2023-2026 DreamWorks Animation LLC
 # SPDX-License-Identifier: Apache-2.0
 
 cmake_minimum_required (VERSION 3.23.1)
@@ -8,10 +8,15 @@ project(${projectString}
     VERSION ${versionString}
     LANGUAGES NONE) # don't try to test the CXX compiler
 
+find_package(Python REQUIRED COMPONENTS Interpreter)
+
+set(pythonInstallDir
+    python/lib/python${Python_VERSION_MAJOR}.${Python_VERSION_MINOR})
+
 install(DIRECTORY render_profile_viewer
-        DESTINATION python/render_profile_viewer)
+        DESTINATION ${pythonInstallDir}
+        PATTERN "__pycache__" EXCLUDE
+        PATTERN "*.pyc" EXCLUDE)
 
-install(FILES setup.py_open
-        DESTINATION python/render_profile_viewer
-        RENAME setup.py)
-
+install(PROGRAMS bin/render_profile_viewer
+        DESTINATION bin)

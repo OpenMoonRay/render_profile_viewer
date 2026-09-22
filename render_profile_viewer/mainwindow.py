@@ -1,8 +1,6 @@
-# Copyright 2023-2024 DreamWorks Animation LLC
+# Copyright 2023-2026 DreamWorks Animation LLC
 # SPDX-License-Identifier: Apache-2.0
 
-from PyQt5 import QtWidgets, QtCore, QtChart, QtGui
-from PyQt5.QtGui import QImage, QColor, QTextCharFormat
 import os
 import numpy as np
 import OpenImageIO as oiio
@@ -17,6 +15,20 @@ import copy
 import re
 import datetime
 import tempfile
+
+from render_profile_viewer.qt import (
+    QAction,
+    QShortcut,
+    QtChart,
+    QtCore,
+    QtGui,
+    QtWidgets,
+    Signal,
+)
+
+QImage = QtGui.QImage
+QColor = QtGui.QColor
+QTextCharFormat = QtGui.QTextCharFormat
 
 try:
     from render_profile_viewer._version import __version__
@@ -101,8 +113,8 @@ def _is_profile_structure(path):
 # noinspection PyUnresolvedReferences
 class RenderProfileChartView(QtChart.QChartView):
 
-    stat_signal = QtCore.pyqtSignal(str)
-    annotation_changed_signal = QtCore.pyqtSignal(list)
+    stat_signal = Signal(str)
+    annotation_changed_signal = Signal(list)
 
     stat_colors = dict()
 
@@ -587,7 +599,7 @@ class RenderProfileChartView(QtChart.QChartView):
             menu.addSeparator()
             clear_action = menu.addAction("Clear all annotations")
 
-        action = menu.exec_(event.globalPos())
+        action = menu.exec(event.globalPos())
         if action is None:
             return
 
@@ -1122,56 +1134,56 @@ class MyWindow(QtWidgets.QMainWindow):
         # File Menu
         file_menu = menu_bar.addMenu('File')
 
-        set_profile_dir_action = QtWidgets.QAction("Set alternate profiling dir", self)
+        set_profile_dir_action = QAction("Set alternate profiling dir", self)
         set_profile_dir_action.triggered.connect(self.set_profile_dir)
         file_menu.addAction(set_profile_dir_action)
 
-        set_log_dir_action = QtWidgets.QAction("Set log dir", self)
+        set_log_dir_action = QAction("Set log dir", self)
         set_log_dir_action.triggered.connect(self.set_log_dir)
         file_menu.addAction(set_log_dir_action)
 
-        use_cache_action = QtWidgets.QAction("Use cache", self)
+        use_cache_action = QAction("Use cache", self)
         use_cache_action.setCheckable(True)
         use_cache_action.setChecked(self.use_cache)
         use_cache_action.triggered.connect(self.set_use_cache)
         file_menu.addAction(use_cache_action)
 
-        set_cache_dir_action = QtWidgets.QAction("Set cache dir", self)
+        set_cache_dir_action = QAction("Set cache dir", self)
         set_cache_dir_action.triggered.connect(self.set_cache_dir)
         file_menu.addAction(set_cache_dir_action)
 
-        clear_cache_dir_action = QtWidgets.QAction("Clear cache dir", self)
+        clear_cache_dir_action = QAction("Clear cache dir", self)
         clear_cache_dir_action.triggered.connect(self.clear_cache_dir)
         file_menu.addAction(clear_cache_dir_action)
 
-        quit_action = QtWidgets.QAction("Quit", self)
+        quit_action = QAction("Quit", self)
         quit_action.triggered.connect(QtCore.QCoreApplication.quit)
         file_menu.addAction(quit_action)
 
         # View Menu
         view_menu = menu_bar.addMenu('View')
 
-        set_light_theme_action = QtWidgets.QAction("Set light theme", self)
+        set_light_theme_action = QAction("Set light theme", self)
         set_light_theme_action.triggered.connect(self.set_light_theme)
         view_menu.addAction(set_light_theme_action)
 
-        set_dark_theme_action = QtWidgets.QAction("Set dark theme", self)
+        set_dark_theme_action = QAction("Set dark theme", self)
         set_dark_theme_action.triggered.connect(self.set_dark_theme)
         view_menu.addAction(set_dark_theme_action)
 
-        increase_font_size_action = QtWidgets.QAction("Increase font size", self)
+        increase_font_size_action = QAction("Increase font size", self)
         increase_font_size_action.triggered.connect(self.font_size_increase)
         view_menu.addAction(increase_font_size_action)
 
-        decrease_font_size_action = QtWidgets.QAction("Decrease font size", self)
+        decrease_font_size_action = QAction("Decrease font size", self)
         decrease_font_size_action.triggered.connect(self.font_size_decrease)
         view_menu.addAction(decrease_font_size_action)
 
-        set_label_angle_action = QtWidgets.QAction("Set chart label angle", self)
+        set_label_angle_action = QAction("Set chart label angle", self)
         set_label_angle_action.triggered.connect(self.set_chart_label_angle)
         view_menu.addAction(set_label_angle_action)
 
-        set_chart_height_action = QtWidgets.QAction("Set explicit chart height", self)
+        set_chart_height_action = QAction("Set explicit chart height", self)
         set_chart_height_action.triggered.connect(self.set_explicit_chart_height)
         view_menu.addAction(set_chart_height_action)
 
@@ -1463,13 +1475,15 @@ class MyWindow(QtWidgets.QMainWindow):
 
         self.image_tab_widget = QtWidgets.QTabWidget()
         self.image_tab_widget.setTabBar(CustomTabBar())
+        self.image_tab_widget.currentChanged.connect(
+            self._on_outer_image_tab_changed)
 
         # Add shortcuts for cycling test type tabs
-        next_type_tab = QtWidgets.QShortcut(QtGui.QKeySequence("Ctrl+PgDown"), self.image_tab_widget)
+        next_type_tab = QShortcut(QtGui.QKeySequence("Ctrl+PgDown"), self.image_tab_widget)
         next_type_tab.activated.connect(
             lambda: self.image_tab_widget.setCurrentIndex((self.image_tab_widget.currentIndex() + 1) % self.image_tab_widget.count()))
 
-        prev_type_tab = QtWidgets.QShortcut(QtGui.QKeySequence("Ctrl+PgUp"), self.image_tab_widget)
+        prev_type_tab = QShortcut(QtGui.QKeySequence("Ctrl+PgUp"), self.image_tab_widget)
         prev_type_tab.activated.connect(
             lambda: self.image_tab_widget.setCurrentIndex((self.image_tab_widget.currentIndex() - 1) % self.image_tab_widget.count()))
 
@@ -1816,10 +1830,10 @@ class MyWindow(QtWidgets.QMainWindow):
         pop_menu = QtWidgets.QMenu()
 
         if self.logs_list.itemAt(position):
-            set_test_name_action = QtWidgets.QAction("Set test name")
+            set_test_name_action = QAction("Set test name")
             set_test_name_action.triggered.connect(self.set_custom_log_name)
             pop_menu.addAction(set_test_name_action)
-            pop_menu.exec_(self.logs_list.mapToGlobal(position))
+            pop_menu.exec(self.logs_list.mapToGlobal(position))
 
     def set_custom_log_name(self):
         selected_item = self.logs_list.selectedItems()[0]
@@ -2166,6 +2180,7 @@ class MyWindow(QtWidgets.QMainWindow):
 
         prev_selected_weeks = [i.text() for i in self.weeks_list.selectedItems()]
 
+        weeks_signal_blocker = QtCore.QSignalBlocker(self.weeks_list)
         self.weeks_list.clear()
         self.stats.clear()
         if len(self.tests_list.selectedItems()) == 0:
@@ -2227,6 +2242,7 @@ class MyWindow(QtWidgets.QMainWindow):
             should_scroll_to_bottom = True
         
         self.process_weeks = True
+        weeks_signal_blocker.unblock()
         self.selection_changed_weeks()
         
         # Scroll to bottom after everything is complete (only for new test selections)
@@ -2558,11 +2574,11 @@ class MyWindow(QtWidgets.QMainWindow):
         self.image_tab_widget.addTab(tab, name)
 
         # Add shortcuts
-        next_tab = QtWidgets.QShortcut(QtGui.QKeySequence("PgDown"), tab)
+        next_tab = QShortcut(QtGui.QKeySequence("PgDown"), tab)
         next_tab.activated.connect(
             lambda: tab.setCurrentIndex((tab.currentIndex() + 1) % tab.count()))
 
-        prev_tab = QtWidgets.QShortcut(QtGui.QKeySequence("PgUp"), tab)
+        prev_tab = QShortcut(QtGui.QKeySequence("PgUp"), tab)
         prev_tab.activated.connect(
             lambda: tab.setCurrentIndex((tab.currentIndex() - 1) % tab.count()))
 
@@ -2830,13 +2846,6 @@ class MyWindow(QtWidgets.QMainWindow):
                 self.image_tabs[test_type].currentChanged.connect(
                     lambda index, t=tt: self._on_image_tab_changed(t, index))
 
-        # Ensure outer image tab changes also trigger lazy loading for the newly visible test type
-        try:
-            self.image_tab_widget.currentChanged.disconnect(self._on_outer_image_tab_changed)
-        except TypeError:
-            pass
-        self.image_tab_widget.currentChanged.connect(self._on_outer_image_tab_changed)
-
         # Eagerly load the currently visible tab for each test type
         for test_type in self.image_tabs:
             if self.image_tabs[test_type] and self.image_tabs[test_type].count() > 0:
@@ -2845,7 +2854,7 @@ class MyWindow(QtWidgets.QMainWindow):
     def _on_outer_image_tab_changed(self, index):
         """When the outer image_tab_widget (Scalar/Vector/XPU) changes, ensure
         the current week tab for the newly visible test type is loaded."""
-        if index < 0:
+        if index < 0 or not self.image_tabs:
             return
         outer_widget = self.image_tab_widget.widget(index)
         if outer_widget is None:
