@@ -1,8 +1,6 @@
-# Copyright 2023-2024 DreamWorks Animation LLC
+# Copyright 2023-2026 DreamWorks Animation LLC
 # SPDX-License-Identifier: Apache-2.0
 
-from PyQt5 import QtWidgets, QtCore, QtChart, QtGui
-from PyQt5.QtGui import QImage, QColor, QTextCharFormat
 import os
 import numpy as np
 import OpenImageIO as oiio
@@ -17,6 +15,20 @@ import copy
 import re
 import datetime
 import tempfile
+
+from render_profile_viewer.qt import (
+    QAction,
+    QShortcut,
+    QtChart,
+    QtCore,
+    QtGui,
+    QtWidgets,
+    Signal,
+)
+
+QImage = QtGui.QImage
+QColor = QtGui.QColor
+QTextCharFormat = QtGui.QTextCharFormat
 
 try:
     from render_profile_viewer._version import __version__
@@ -76,11 +88,33 @@ def get_gigabytes_from_size(size_string, size_unit):
         return float(size_string) / 1024 / 1024
 
 
+_DATE_PREFIX_RE = re.compile(r'^\d{4}-\d{2}-\d{2}_')
+_RUN_BASED_ABBREVS = {'sca', 'vec', 'xpu'}
+
+
+def _is_profile_structure(path):
+    """Return True if path is a directory whose immediate subdirectories
+    contain date-prefixed (.txt/.log) log files, matching the layout used
+    by the default profile_directory (test_name/YYYY-MM-DD_*.txt)."""
+    if not os.path.isdir(path):
+        return False
+    with os.scandir(path) as entries:
+        for entry in entries:
+            if entry.is_dir():
+                with os.scandir(entry.path) as subentries:
+                    for subentry in subentries:
+                        if not subentry.is_dir():
+                            ext = os.path.splitext(subentry.name)[1]
+                            if ext in ('.txt', '.log') and _DATE_PREFIX_RE.match(subentry.name):
+                                return True
+    return False
+
+
 # noinspection PyUnresolvedReferences
 class RenderProfileChartView(QtChart.QChartView):
 
-    stat_signal = QtCore.pyqtSignal(str)
-    annotation_changed_signal = QtCore.pyqtSignal(list)
+    stat_signal = Signal(str)
+    annotation_changed_signal = Signal(list)
 
     stat_colors = dict()
 
@@ -565,7 +599,7 @@ class RenderProfileChartView(QtChart.QChartView):
             menu.addSeparator()
             clear_action = menu.addAction("Clear all annotations")
 
-        action = menu.exec_(event.globalPos())
+        action = menu.exec(event.globalPos())
         if action is None:
             return
 
@@ -1031,9 +1065,13 @@ class MyWindow(QtWidgets.QMainWindow):
 
         self.images_cache = dict()
         self.log_file_mode = False
+        self._cmdline_profile_dir = None
         if logs:
-            self.log_files = logs
-            self.log_file_mode = True
+            if len(logs) == 1 and _is_profile_structure(logs[0]):
+                self._cmdline_profile_dir = os.path.abspath(logs[0])
+            else:
+                self.log_files = logs
+                self.log_file_mode = True
 
         # Debounce timer for test selection changes
         self._test_selection_timer = QtCore.QTimer()
@@ -1053,6 +1091,9 @@ class MyWindow(QtWidgets.QMainWindow):
         self.profile_directory = os.environ.get(
             "RPV_PROFILE_DIR",
             "/work/rd/raas/moonray/ProfileRuns/latest_results/profile_reports")
+        if self._cmdline_profile_dir:
+            self.profile_directory = self._cmdline_profile_dir
+        self._run_based_mode = self._detect_run_based_mode()
         self.process_weeks = True
         self.current_test_name = None
 
@@ -1093,56 +1134,56 @@ class MyWindow(QtWidgets.QMainWindow):
         # File Menu
         file_menu = menu_bar.addMenu('File')
 
-        set_profile_dir_action = QtWidgets.QAction("Set alternate profiling dir", self)
+        set_profile_dir_action = QAction("Set alternate profiling dir", self)
         set_profile_dir_action.triggered.connect(self.set_profile_dir)
         file_menu.addAction(set_profile_dir_action)
 
-        set_log_dir_action = QtWidgets.QAction("Set log dir", self)
+        set_log_dir_action = QAction("Set log dir", self)
         set_log_dir_action.triggered.connect(self.set_log_dir)
         file_menu.addAction(set_log_dir_action)
 
-        use_cache_action = QtWidgets.QAction("Use cache", self)
+        use_cache_action = QAction("Use cache", self)
         use_cache_action.setCheckable(True)
         use_cache_action.setChecked(self.use_cache)
         use_cache_action.triggered.connect(self.set_use_cache)
         file_menu.addAction(use_cache_action)
 
-        set_cache_dir_action = QtWidgets.QAction("Set cache dir", self)
+        set_cache_dir_action = QAction("Set cache dir", self)
         set_cache_dir_action.triggered.connect(self.set_cache_dir)
         file_menu.addAction(set_cache_dir_action)
 
-        clear_cache_dir_action = QtWidgets.QAction("Clear cache dir", self)
+        clear_cache_dir_action = QAction("Clear cache dir", self)
         clear_cache_dir_action.triggered.connect(self.clear_cache_dir)
         file_menu.addAction(clear_cache_dir_action)
 
-        quit_action = QtWidgets.QAction("Quit", self)
+        quit_action = QAction("Quit", self)
         quit_action.triggered.connect(QtCore.QCoreApplication.quit)
         file_menu.addAction(quit_action)
 
         # View Menu
         view_menu = menu_bar.addMenu('View')
 
-        set_light_theme_action = QtWidgets.QAction("Set light theme", self)
+        set_light_theme_action = QAction("Set light theme", self)
         set_light_theme_action.triggered.connect(self.set_light_theme)
         view_menu.addAction(set_light_theme_action)
 
-        set_dark_theme_action = QtWidgets.QAction("Set dark theme", self)
+        set_dark_theme_action = QAction("Set dark theme", self)
         set_dark_theme_action.triggered.connect(self.set_dark_theme)
         view_menu.addAction(set_dark_theme_action)
 
-        increase_font_size_action = QtWidgets.QAction("Increase font size", self)
+        increase_font_size_action = QAction("Increase font size", self)
         increase_font_size_action.triggered.connect(self.font_size_increase)
         view_menu.addAction(increase_font_size_action)
 
-        decrease_font_size_action = QtWidgets.QAction("Decrease font size", self)
+        decrease_font_size_action = QAction("Decrease font size", self)
         decrease_font_size_action.triggered.connect(self.font_size_decrease)
         view_menu.addAction(decrease_font_size_action)
 
-        set_label_angle_action = QtWidgets.QAction("Set chart label angle", self)
+        set_label_angle_action = QAction("Set chart label angle", self)
         set_label_angle_action.triggered.connect(self.set_chart_label_angle)
         view_menu.addAction(set_label_angle_action)
 
-        set_chart_height_action = QtWidgets.QAction("Set explicit chart height", self)
+        set_chart_height_action = QAction("Set explicit chart height", self)
         set_chart_height_action.triggered.connect(self.set_explicit_chart_height)
         view_menu.addAction(set_chart_height_action)
 
@@ -1187,12 +1228,12 @@ class MyWindow(QtWidgets.QMainWindow):
             self.tests_list.itemSelectionChanged.connect(self.selection_changed_tests)
             self.populate_test_list()
 
-            # Weeks List
+            # Weeks/Dates List
             weeks_list_widget = QtWidgets.QWidget()
             tests_weeks_v_splitter.addWidget(weeks_list_widget)
             weeks_list_widget.setLayout(QtWidgets.QVBoxLayout())
-            weeks_list_label = QtWidgets.QLabel("Weeks")
-            weeks_list_widget.layout().addWidget(weeks_list_label)
+            self.weeks_list_label = QtWidgets.QLabel("Dates/Runs" if self._run_based_mode else "Weeks")
+            weeks_list_widget.layout().addWidget(self.weeks_list_label)
             self.weeks_list = QtWidgets.QListWidget()
             weeks_list_widget.layout().addWidget(self.weeks_list)
             self.weeks_list.setSelectionMode(QtWidgets.QAbstractItemView.ExtendedSelection)
@@ -1434,13 +1475,15 @@ class MyWindow(QtWidgets.QMainWindow):
 
         self.image_tab_widget = QtWidgets.QTabWidget()
         self.image_tab_widget.setTabBar(CustomTabBar())
+        self.image_tab_widget.currentChanged.connect(
+            self._on_outer_image_tab_changed)
 
         # Add shortcuts for cycling test type tabs
-        next_type_tab = QtWidgets.QShortcut(QtGui.QKeySequence("Ctrl+PgDown"), self.image_tab_widget)
+        next_type_tab = QShortcut(QtGui.QKeySequence("Ctrl+PgDown"), self.image_tab_widget)
         next_type_tab.activated.connect(
             lambda: self.image_tab_widget.setCurrentIndex((self.image_tab_widget.currentIndex() + 1) % self.image_tab_widget.count()))
 
-        prev_type_tab = QtWidgets.QShortcut(QtGui.QKeySequence("Ctrl+PgUp"), self.image_tab_widget)
+        prev_type_tab = QShortcut(QtGui.QKeySequence("Ctrl+PgUp"), self.image_tab_widget)
         prev_type_tab.activated.connect(
             lambda: self.image_tab_widget.setCurrentIndex((self.image_tab_widget.currentIndex() - 1) % self.image_tab_widget.count()))
 
@@ -1787,10 +1830,10 @@ class MyWindow(QtWidgets.QMainWindow):
         pop_menu = QtWidgets.QMenu()
 
         if self.logs_list.itemAt(position):
-            set_test_name_action = QtWidgets.QAction("Set test name")
+            set_test_name_action = QAction("Set test name")
             set_test_name_action.triggered.connect(self.set_custom_log_name)
             pop_menu.addAction(set_test_name_action)
-            pop_menu.exec_(self.logs_list.mapToGlobal(position))
+            pop_menu.exec(self.logs_list.mapToGlobal(position))
 
     def set_custom_log_name(self):
         selected_item = self.logs_list.selectedItems()[0]
@@ -1837,6 +1880,9 @@ class MyWindow(QtWidgets.QMainWindow):
         file_dialog.setOptions(QtWidgets.QFileDialog.DontUseNativeDialog)  # Forces Qt dialog with input field
         if file_dialog.exec():
             self.profile_directory = file_dialog.selectedFiles()[0]  # Get the chosen directory
+            self._run_based_mode = self._detect_run_based_mode()
+            if hasattr(self, 'weeks_list_label'):
+                self.weeks_list_label.setText("Dates/Runs" if self._run_based_mode else "Weeks")
             self.setWindowTitle(f"Render Profile Viewer {__version__} -- (Profile directory: {self.profile_directory})")
             self.populate_test_list()
             self.tests_list.setCurrentRow(0)
@@ -2079,6 +2125,27 @@ class MyWindow(QtWidgets.QMainWindow):
     def get_test_dir(self, test_name):
         return os.path.join(self.profile_directory, test_name)
 
+    def _detect_run_based_mode(self):
+        """Return True if profile_directory uses date_N_abbrev_scene.txt naming
+        (abbreviated exec mode + scene suffix) rather than the default
+        date_N_exec_mode.txt naming with full mode names."""
+        try:
+            with os.scandir(self.profile_directory) as entries:
+                for entry in entries:
+                    if entry.is_dir():
+                        with os.scandir(entry.path) as subentries:
+                            for subentry in subentries:
+                                if not subentry.is_dir():
+                                    stem, ext = os.path.splitext(subentry.name)
+                                    if ext in ('.txt', '.log'):
+                                        parts = stem.split('_')
+                                        if len(parts) >= 3 and parts[1].isdigit() and parts[2] in _RUN_BASED_ABBREVS:
+                                            return True
+                                        return False
+        except OSError:
+            pass
+        return False
+
     def extract_weeks_from_cache_directory(self, cache_dir, test_name, weeks):
         """Extract weeks from cache files in the specified directory.
         
@@ -2113,6 +2180,7 @@ class MyWindow(QtWidgets.QMainWindow):
 
         prev_selected_weeks = [i.text() for i in self.weeks_list.selectedItems()]
 
+        weeks_signal_blocker = QtCore.QSignalBlocker(self.weeks_list)
         self.weeks_list.clear()
         self.stats.clear()
         if len(self.tests_list.selectedItems()) == 0:
@@ -2129,11 +2197,20 @@ class MyWindow(QtWidgets.QMainWindow):
         with os.scandir(test_dir) as files:
             for f in files:
                 if not f.is_dir():
-                    week = f.name.split('_')[0]
-                    weeks.add(week)
+                    if self._run_based_mode:
+                        ext = os.path.splitext(f.name)[1]
+                        if ext not in ('.txt', '.log'):
+                            continue
+                        parts = f.name.split('_')
+                        if len(parts) >= 2 and parts[1].isdigit():
+                            weeks.add('_'.join(parts[:2]))
+                    else:
+                        week = f.name.split('_')[0]
+                        weeks.add(week)
 
         # If use_cache is enabled, also check cache directories for cache files
-        if self.use_cache:
+        # (skip in run-based mode: cache keys use date-only format which would pollute the list)
+        if self.use_cache and not self._run_based_mode:
             # Check global cache directory first
             self.extract_weeks_from_cache_directory(self.global_cache_directory, test_name, weeks)
             
@@ -2165,6 +2242,7 @@ class MyWindow(QtWidgets.QMainWindow):
             should_scroll_to_bottom = True
         
         self.process_weeks = True
+        weeks_signal_blocker.unblock()
         self.selection_changed_weeks()
         
         # Scroll to bottom after everything is complete (only for new test selections)
@@ -2177,14 +2255,26 @@ class MyWindow(QtWidgets.QMainWindow):
 
     def get_log_path(self, test_name, week, exec_mode):
         test_dir = self.get_test_dir(test_name)
+        abbrev = exec_mode[:3]  # e.g. sca/vec/xpu
+        if self._run_based_mode:
+            # Files: {date}_{run}_{abbrev}_{scene}.txt — week already encodes date_run
+            with os.scandir(test_dir) as files:
+                for f in files:
+                    if not f.is_dir():
+                        if fnmatch.fnmatch(f.name, f"{week}_{abbrev}*.txt"):
+                            return os.path.join(test_dir, f.name)
+            return None
+        # Default mode: {date}_*_{exec_mode}.txt
+        abbrev_fallback = None
         with os.scandir(test_dir) as files:
             for f in files:
                 if not f.is_dir():
                     if fnmatch.fnmatch(f.name, f"{week}_*_{exec_mode}.txt"):
-                        log_path = os.path.join(test_dir, f.name)
-                        return log_path
-
-        return None
+                        return os.path.join(test_dir, f.name)
+                    if abbrev != exec_mode and abbrev_fallback is None:
+                        if fnmatch.fnmatch(f.name, f"{week}_*_{abbrev}*.txt"):
+                            abbrev_fallback = os.path.join(test_dir, f.name)
+        return abbrev_fallback
 
     def search_log_next(self):
         self.search_forward = True
@@ -2242,7 +2332,7 @@ class MyWindow(QtWidgets.QMainWindow):
             if week not in self.stats:
                 self.stats[week] = dict()
             log_path = self.get_log_path(test_name, week, test_type)
-            if not log_path:
+            if not log_path and not self._run_based_mode:
                 next_day = str(datetime.datetime.strptime(week, "%Y-%m-%d").date() +
                                datetime.timedelta(days=1))
                 log_path = self.get_log_path(test_name, next_day, test_type)
@@ -2250,15 +2340,15 @@ class MyWindow(QtWidgets.QMainWindow):
                     prev_day = str(datetime.datetime.strptime(week, "%Y-%m-%d").date() -
                                    datetime.timedelta(days=1))
                     log_path = self.get_log_path(test_name, prev_day, test_type)
-                    if not log_path:
-                        # If cache is enabled, try to load from cache even without log file
-                        if self.use_cache:
-                            cache_file_name = f"{test_name}_{week}_{test_type}.json"
-                            stats = self.load_stats_from_cache(cache_file_name)
-                            if stats:
-                                self.stats[week][test_type] = stats
-                                continue
-                        self.stats[week][test_type] = "missing"
+            if not log_path:
+                # If cache is enabled, try to load from cache even without log file
+                if self.use_cache:
+                    cache_file_name = f"{test_name}_{week}_{test_type}.json"
+                    stats = self.load_stats_from_cache(cache_file_name)
+                    if stats:
+                        self.stats[week][test_type] = stats
+                        continue
+                self.stats[week][test_type] = "missing"
             if log_path:
                 if test_type not in self.stats[week]:
                     self.stats[week][test_type] = self.get_stats(test_name, week, log_path, test_type)
@@ -2484,11 +2574,11 @@ class MyWindow(QtWidgets.QMainWindow):
         self.image_tab_widget.addTab(tab, name)
 
         # Add shortcuts
-        next_tab = QtWidgets.QShortcut(QtGui.QKeySequence("PgDown"), tab)
+        next_tab = QShortcut(QtGui.QKeySequence("PgDown"), tab)
         next_tab.activated.connect(
             lambda: tab.setCurrentIndex((tab.currentIndex() + 1) % tab.count()))
 
-        prev_tab = QtWidgets.QShortcut(QtGui.QKeySequence("PgUp"), tab)
+        prev_tab = QShortcut(QtGui.QKeySequence("PgUp"), tab)
         prev_tab.activated.connect(
             lambda: tab.setCurrentIndex((tab.currentIndex() - 1) % tab.count()))
 
@@ -2756,13 +2846,6 @@ class MyWindow(QtWidgets.QMainWindow):
                 self.image_tabs[test_type].currentChanged.connect(
                     lambda index, t=tt: self._on_image_tab_changed(t, index))
 
-        # Ensure outer image tab changes also trigger lazy loading for the newly visible test type
-        try:
-            self.image_tab_widget.currentChanged.disconnect(self._on_outer_image_tab_changed)
-        except TypeError:
-            pass
-        self.image_tab_widget.currentChanged.connect(self._on_outer_image_tab_changed)
-
         # Eagerly load the currently visible tab for each test type
         for test_type in self.image_tabs:
             if self.image_tabs[test_type] and self.image_tabs[test_type].count() > 0:
@@ -2771,7 +2854,7 @@ class MyWindow(QtWidgets.QMainWindow):
     def _on_outer_image_tab_changed(self, index):
         """When the outer image_tab_widget (Scalar/Vector/XPU) changes, ensure
         the current week tab for the newly visible test type is loaded."""
-        if index < 0:
+        if index < 0 or not self.image_tabs:
             return
         outer_widget = self.image_tab_widget.widget(index)
         if outer_widget is None:
@@ -3120,9 +3203,16 @@ def main():
     parser = argparse.ArgumentParser(description="Visualizes render profile"
                                                  " statistics from log files"
                                                  " using charts")
-    parser.add_argument('logs', nargs='*', help='optional list of log files to '
-                                                'display as an alternative to the '
-                                                'default render logs')
+    parser.add_argument('logs', nargs='*',
+                        help='optional list of log files or directories to display. '
+                             'If a single directory is given and it contains '
+                             'subdirectories with date-prefixed log files '
+                             '(YYYY-MM-DD_N_<mode>_<scene>.txt), it is treated as a '
+                             'profile directory: subdirectory names become the Tests '
+                             'list and date/run combinations (e.g. 2026-06-16_1) '
+                             'become the Dates/Runs list, mirroring the default '
+                             'weekly-profile layout. Otherwise, all .log/.txt files '
+                             'found recursively are shown in a flat log list.')
     args = parser.parse_args()
 
     app = QtWidgets.QApplication(sys.argv)
